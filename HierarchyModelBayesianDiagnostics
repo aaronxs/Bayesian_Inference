@@ -1,0 +1,119 @@
+# Diagnostics on hierarchy Normal model
+library(R2OpenBUGS)
+# loading the data
+x <- c(16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46)
+y <- c(2508,2518,3304,3423,3057,3190,3500,3883,3823,3646,3708,
+       3333,3517,3241,3103,2776)
+data1 <- list("x", "y")
+# define the initial functions for the two models
+initial1 <- function(){list(b = c(1, 1), tau = 1)} 
+initial2 <- function(){list(b = c(1, 1, 1), tau = 1)}
+# create a file where the Model 1 is defined
+cat("model{
+  for(i in 1:16){
+    y[i] ~ dnorm(mu[i], tau)
+    mu[i] <- b[1] + b[2]*(x[i] - 31)
+    }
+  b[1] ~ dnorm(0, 0.000001)
+  b[2] ~ dnorm(0, 0.000001)
+  tau ~ dgamma(0.0001, 0.0001)
+}", file="model1.txt")
+# create a file where the Model 2 is defined
+cat("model{
+  for(i in 1:16){
+    y[i] ~ dnorm(mu[i], tau)
+    mu[i] <- b[1] + b[2]*(x[i] - 31) + b[3]*pow((x[i] - 31), 2)
+    }
+  b[1] ~ dnorm(0, 0.000001)
+  b[2] ~ dnorm(0, 0.000001)
+  b[3] ~ dnorm(0, 0.01)
+  tau ~ dgamma(0.0001, 0.0001)
+  }", file="model2.txt")
+# parameters
+pars=c("b","tau")
+# running model 1
+model1 <- bugs(data=data1, inits=initial1, parameters.to.save=pars,
+               model.file="model1.txt", n.chains=1, n.iter=110000,
+               n.burnin=1000, n.thin=1, debug=TRUE)
+# running model 2
+model2 <- bugs(data=data1, inits=initial2, parameters.to.save=pars,
+               model.file="model2.txt", n.chains=1, n.iter=110000,
+               n.burnin=1000, n.thin=1, debug=TRUE)
+# summarizing the DIC and deviance measures
+compTable <- rbind(c(model1$DIC, model1$mean$deviance), 
+                   c(model2$DIC, model2$mean$deviance))
+rownames(compTable) <- c("Model 1", "Model 2")
+colnames(compTable) <- c("DIC", "Deviance")
+# Bayes factor model
+cat("model{
+  for(i in 1:16){
+    y[i] ~ dnorm(mu[i], tau) 
+    mu[i]<- b[1] + b[2]*(x[i] - 31) + b[3]*pow((x[i] - 31), 2)*f
+    } 
+  for(j in 1:2){
+    model[j] <- equals((2 - j), f)
+  }
+  t0 <- 1/15
+  prob <- 1/2 
+  f ~ dbern(prob) 
+  b[1] ~ dnorm(0, t0) 
+  b[2] ~ dnorm(0, t0)
+  b[3] ~ dnorm(0, t0)
+  tau ~ dgamma(0.001, 0.001)
+}", file="bayesmodel.txt")
+# initial function for the bayes factor model
+initialBayes <- function(){list(b = c(1, 1, 1), tau = 1, f = 1)}
+parsBayes <- c('b','f','model')
+# running the Bayes factor model
+modelBayes <- bugs(data=data1, inits=initialBayes, 
+             parameters.to.save=parsBayes, 
+             model.file="bayesmodel.txt", n.chains=1, n.iter=110000, 
+             n.burnin=10000, n.thin=1, debug=TRUE)
+# Summarizing the result
+BayesFact <- as.data.frame(modelBayes$summary[5:6,])
+BayesFact$`25%` <- NULL
+BayesFact$`75%` <- NULL
+BayesFact <- rbind(BayesFact, 
+                   c(log(BayesFact[1,1]/BayesFact[2,1]), 
+                     NA, NA, NA, NA))
+rownames(BayesFact) <- c("Model 1", "Model 2", "Bayes Factor")
+colnames(BayesFact) <- c("Mean", "SD", "2.5%", "50%", "97.5%")
+
+# Model for residual analysis
+cat("model{
+  for(i in 1:16){
+    y[i] ~ dnorm(mu[i], tau)
+    mu[i] <- b[1] + b[2]*(x[i] - 31)
+    res[i] <- (y[i] - mu[i])
+    std.res[i] <- res[i]*sqrt(tau)
+    y.pred[i] ~ dnorm(mu[i], tau)
+    p.ext[i] <- step(y[i] - y.pred[i])
+    res.pred[i] <- y.pred[i] - mu[i]
+    std.res.pred[i] <- res.pred[i]*sqrt(tau)
+    }
+    b[1] ~ dnorm(0, 0.000001)
+    b[2] ~ dnorm(0, 0.000001)
+    tau ~ dgamma(0.0001, 0.0001)
+    }", file="resmodel.txt")
+initialRes <- function() {list(b=c(1, 1), tau=1, y.pred=rnorm(16, mean=0, sd=1))}
+parsRes <- c("b", "tau", 'res','std.res',"res.pred", "std.res.pred", "p.ext")
+modelRes <- bugs(data=data1, inits=initialRes, parameters.to.save=parsRes,
+            model.file="resmodel.txt", n.chains=1, n.iter=110000, 
+            n.burnin=10000, n.thin=1, debug=TRUE)
+# summarizing the results
+names <- NULL
+for(i in 1:16){
+  names <- c(names, paste("Ob #", i, sep=""))
+}
+res <- modelRes$summary[36:51,-c(4,6)]
+stdres <- modelRes$summary[52:67,-c(4,6)]
+pext <- modelRes$summary[68:83,-c(4,6)]
+rownames(res) <- names
+rownames(stdres) <- names
+rownames(pext) <- names
+save.image("C:/Users/Aaron-/Desktop/2016 Winter Courses/CHL5223/Assignment 4/Q1/q1Data.RData")
+# par(mfrow=c(2,2))
+# plot(res[,1], ylab="Residual", main="Posterior Residual Mean")
+# plot(res[,4], ylab="Residual", main="Posterior Residual Median")
+# plot(stdres[,1], ylab="Standardized Residual", main="Posterior Residual Mean")
+# plot(stdres[,4], ylab="Standardized Residual", main="Posterior Residual Median")
