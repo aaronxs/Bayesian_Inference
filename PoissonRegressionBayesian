@@ -1,0 +1,115 @@
+# Poisson regression on down syndrome births via Bayesian
+library(R2OpenBUGS)
+# loading the data and naming the columns of data
+downdata <- read.table("DownBirthData.txt")
+colnames(downdata) <- c("age", "birthorder", "numdown", "numlivebirth")
+age <- downdata[,1]
+birthorder <- downdata[,2]
+numdown <- downdata[,3]
+numlivebirth <- downdata[,4]
+# create a file where the model is defined
+cat("model{
+  for(i in 1:30)
+  {
+    numdown[i] ~ dpois(lam[i])
+    log(lam[i]) <- log(numlivebirth[i]) + b0 + beta.age[age[i]] + beta.bo[birthorder[i]] + b[i]
+    b[i] ~ dnorm(0, tau)
+    b.adj[i] <- b[i] - mean(b[])
+  }
+  b0 ~ dnorm(0,.001)
+  b0.adj <- b0 + mean(b[]) + mean(beta.age[]) + mean(beta.bo[])
+  for(is in 1:6){
+    beta.age[is] ~ dnorm(mu.age, tau.age)
+    beta.age.adj[is] <- beta.age[is] - mean(beta.age[])
+  }
+  mu.age ~ dnorm(0, 0.001)
+  for(ic in 1:5){
+    beta.bo[ic] ~ dnorm(mu.bo, tau.bo)
+    beta.bo.adj[ic]<-beta.bo[ic] - mean(beta.bo[])
+  }
+  mu.bo ~ dnorm(0, 0.001)
+
+  tau <- 1/std/std
+  tau.age <- 1/std.age/std.age
+  tau.bo <- 1/std.bo/std.bo
+  std ~ dunif(0, 20)
+  std.age ~ dunif(0, 20)
+  std.bo ~ dunif(0, 20)
+}", file="DownModel.txt")
+# data to le loaded into wingbug
+q2data <- list("age", "birthorder", "numdown", "numlivebirth")
+# initial function
+initial = function(){list(
+  beta.age = rnorm(6), mu.age = rnorm(1), std.age = runif(1, 0.5, 2),
+  beta.bo = rnorm(5), mu.bo = rnorm(1), std.bo = runif(1, 0.5, 2),
+  b = rnorm(30), b0 = rnorm(1), std = runif(1, 0.5, 2))
+}
+pars=c("beta.age.adj", "std.age", "beta.bo.adj", "std.bo", "b0.adj")
+# running the model
+downmcmc <- bugs(data=q2data, inits=initial, parameters.to.save=pars,
+                 model.file="DownModel.txt", n.chains=3, n.iter=110000, 
+                 n.burnin=10000, n.thin=10, debug=TRUE
+)
+downsum <- downmcmc$summary
+downtable <- cbind(downsum[,1:3], downsum[,7])
+downtable<- downtable[-15,]
+colnames(downtable) <- c("mean", "sd", "2.5%", "97.5%")
+rownames(downtable) <- c('$\\beta_{Age,1}$', '$\\beta_{Age,2}$', '$\\beta_{Age,3}$',
+                         '$\\beta_{Age,4}$', '$\\beta_{Age,5}$', '$\\beta_{Age,6}$',
+                         '$S_{Age}$', '$\\beta_{BO,1}$', '$\\beta_{BO,2}$',
+                         '$\\beta_{BO,3}$', '$\\beta_{BO,4}$', '$\\beta_{BO,5}$',
+                         '$S_{BO}$', '$\\beta_{0}$')
+
+downout <- downmcmc$sims.array
+# plotting the acf of the parameters
+parss <- rownames(downsum)[-15]
+parsother <- c(parss[1:7], parss[14])
+parsbo <- parss[8:13]
+par(mfrow=c(3,2))
+for(i in 1:length(parsbo)){
+  acf(downout[,1,parsbo[i]], type='correlation', plot=T, main=c('Autocorrelation for', parsbo[i]))
+}
+par(mfrow=c(4,2))
+for(i in 1:length(parsother)){
+  acf(downout[,1,parsother[i]], type='correlation', plot=T, main=c('Autocorrelation for', parsother[i]))
+}
+# plotting the traceplots of the parameters
+par(mfrow=c(3,2))
+for(i in 1:length(parsbo)){
+  ts.plot(downout[,,parsbo[i]], main=c('Trace plots for', parsbo[i]), col=c(1,2,3))
+}
+par(mfrow=c(4,2))
+for(i in 1:length(parsother)){
+  ts.plot(downout[,,parsother[i]], main=c('Trace plots for', parsother[i]), col=c(1,2,3))
+}
+# plotting the density of the parameters from 3 different chains.
+par(mfrow=c(3,2))
+for(i in 1:length(parsbo)){
+  plot(density(downout[,1,parsbo[i]]), main=c('Density Plots of', parsbo[i]), xlab=parsbo[i])
+  lines(density(downout[,2,parsbo[i]]), col="red")
+  lines(density(downout[,3,parsbo[i]]), col="blue")
+  abline(v=mean(downout[,1:3,parsbo[i]]), col=c(1,2,3))
+}
+par(mfrow=c(4,2))
+for(i in 1:length(parsother)){
+  plot(density(downout[,1,parsother[i]]), main=c('Density Plots of', parsother[i]), xlab=parsother[i])
+  lines(density(downout[,2,parsother[i]]), col="red")
+  lines(density(downout[,3,parsother[i]]), col="blue")
+  abline(v=mean(downout[,1:3,parsother[i]]), col=c(1,2,3))
+}
+
+# Calculating RR when age of mother change from 20 - 24 to 40+
+rrAge <- exp(downtable[6,1] - downtable[2,1])
+seAge <- sqrt(downtable[6,2]^2 + downtable[2,2]^2)
+rrAgeInt <- c(rrAge*exp(-1.98*seAge), rrAge*exp(1.98*seAge))
+AgeSum <- t(as.matrix(c(rrAge, seAge, rrAgeInt)))
+rownames(AgeSum) <- c("$RR_{Age}(2,6)$")
+colnames(AgeSum) <- c("Point Estimate", "SE", "2.5%", "97.5%")
+
+# Calculating RR when child is born first vs born fifth or later
+rrBO <- exp(downtable[8,1] - downtable[12,1])
+seBO <- sqrt(downtable[8,2]^2 + downtable[12,2]^2)
+rrBOInt <- c(rrBO*exp(-1.98*seBO), rrBO*exp(1.98*seBO))
+BOSum <- t(as.matrix(c(rrBO, seBO, rrBOInt)))
+rownames(BOSum) <- c("$RR_{BO}(1,5)$")
+colnames(BOSum) <- c("Point Estimate", "SE", "2.5%", "97.5%")
