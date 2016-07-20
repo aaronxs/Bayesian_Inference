@@ -1,0 +1,70 @@
+# Gibb sampler on relationship of temperature on the growth process of tissue
+# nubmer of iterations & burn in
+N <- 21000; B <- 1000
+# defining prior parameters
+ni <- 5; 
+a = 1; a0=1; b=1^2; b0=1^2 
+# loading samples
+Y = t(matrix(
+  c(1.13, 1.75, 2.30, 3.18,
+    1.20, 1.45, 2.15, 3.10,
+    1.00, 1.55, 2.25, 3.28,
+    0.91, 1.64, 2.40, 3.35,
+    1.05, 1.60, 2.49, 3.12), byrow=T, nrow=5))
+# create a vector to store the posterior estimates
+mu0p <- numeric(N)
+mu1p <- numeric(N)
+mu2p <- numeric(N)
+mu3p <- numeric(N)
+mu4p <- numeric(N)
+taup <- numeric(N)
+tau0p <- numeric(N)
+# setting the prior
+mu0p[1] <- rnorm(1, mean=1, sd=1)
+taup[1] <- rgamma(1, a, b)
+tau0p[1] <- rgamma(1, a0, b0)
+mu1p[1] <- rnorm(1, mean=mu0p[1], sd=1/sqrt(taup[1]))
+mu2p[1] <- rnorm(1, mean=mu0p[1], sd=1/sqrt(taup[1]))
+mu3p[1] <- rnorm(1, mean=mu0p[1], sd=1/sqrt(taup[1]))
+mu4p[1] <- rnorm(1, mean=mu0p[1], sd=1/sqrt(taup[1]))
+
+# running the mcmc
+for(i in 2:N){
+  # updating the paramters one by one
+  theta <- c(mu1p[i-1], mu2p[i-1], mu3p[i-1], mu4p[i-1])
+  mu0p[i] <- rnorm(1, mean=1, sd=1/sqrt(tau0p[i-1] + 5*taup[i-1]))
+  taup[i] <- rgamma(1, 11, 1 + 0.5*sum((Y[1:4,] - theta[1:4])^2))
+  tau0p[i] <- rgamma(1, 3, 1 + 0.5*sum((theta - mu0p[i])^2))
+  mu1p[i] <- rnorm(1, mean=(tau0p[i]*mu0p[i] + ni*taup[i]*mean(Y[1,]))/(tau0p[i] + ni*taup[i]), sd=1/sqrt(4*tau0p[i] + 1))
+  mu2p[i] <- rnorm(1, mean=(tau0p[i]*mu0p[i] + ni*taup[i]*mean(Y[2,]))/(tau0p[i] + ni*taup[i]), sd=1/sqrt(4*tau0p[i] + 1))
+  mu3p[i] <- rnorm(1, mean=(tau0p[i]*mu0p[i] + ni*taup[i]*mean(Y[3,]))/(tau0p[i] + ni*taup[i]), sd=1/sqrt(4*tau0p[i] + 1))
+  mu4p[i] <- rnorm(1, mean=(tau0p[i]*mu0p[i] + ni*taup[i]*mean(Y[4,]))/(tau0p[i] + ni*taup[i]), sd=1/sqrt(4*tau0p[i] + 1))
+}
+
+# plotting the densities
+par(mfrow=c(2,2))
+plot(density(mu1p), main='Marginal Posterior Density of mu1', xlab='mu1')
+plot(density(mu2p), main='Marginal Posterior Density of mu2', xlab='mu2')
+plot(density(mu3p), main='Marginal Posterior Density of mu3', xlab='mu3')
+plot(density(mu4p), main='Marginal Posterior Density of mu4', xlab='mu4')
+
+# tabulating the results
+PostMean <- c(mean(mu1p[1001:N]), mean(mu2p[1001:N]), mean(mu3p[1001:N]), mean(mu4p[1001:N]))
+PostSD <- c(sd(mu1p[1001:N]), sd(mu2p[1001:N]), sd(mu3p[1001:N]), sd(mu4p[1001:N]))
+PostLB <- c(quantile(mu1p[1001:N], probs=0.025), quantile(mu2p[1001:N], probs=0.025), quantile(mu3p[1001:N], probs=0.025), quantile(mu4p[1001:N], probs=0.025))
+PostUB <- c(quantile(mu1p[1001:N], probs=0.975), quantile(mu2p[1001:N], probs=0.975), quantile(mu3p[1001:N], probs=0.975), quantile(mu4p[1001:N], probs=0.975))
+q2table <- cbind(PostMean, PostSD, PostLB, PostUB)
+colnames(q2table) <- c("Mean", "SD", "2.5%", "97.5%")
+rownames(q2table) <- c('$\\mu_1$', '$\\mu_2$','$\\mu_3$', '$\\mu_4$')
+
+# getting the distribution of the difference
+diff <- mu1p - mu3p
+muD <- mean(diff[1001:N])
+sdD <- sd(diff[1001:N])
+LBD <- quantile(diff[1001:N], prob=c(0.025))
+UBD <- quantile(diff[1001:N], prob=c(0.975))
+difftable <- cbind(muD, sdD, LBD, UBD)
+colnames(difftable) <- c("Mean", "SD", "2.5%", "97.5%")
+rownames(difftable) <- c('$\\mu_{1 - 3}$')
+
+
