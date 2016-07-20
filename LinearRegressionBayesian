@@ -1,0 +1,56 @@
+# linear regression via Bayesian appraoch
+library(R2OpenBUGS)
+# loading the data
+fevdata <- read.table("fevdata.txt", header=T)
+
+# setting up the data to be used in the model
+N <- length(fevdata[,1])
+# age <- fevdata["Age"]
+# sex <- fevdata["Sex"]
+# fev <- fevdata["FEV"]
+colnames(fevdata) <- c('id','age','fev','height','sex','smoke')
+attach(fevdata)
+q1data <- list("N", "age", "sex", "fev")
+
+# create a function to initialize the mcmc
+initial <- function(){ list(beta0=mean(fev),beta1=0, beta2=0, tau=1)}
+pars <- c("beta0", "beta1", "beta2", "tau")
+
+# create a file where the model is defined
+cat("model{
+for(i in 1:N){
+fev[i] ~ dnorm(mu[i],tau)
+mu[i] <- beta0 +beta1*age[i] + beta2*sex[i]
+}
+beta0 ~ dnorm(0, 0.0001)
+beta1 ~ dnorm(0, 0.0001)
+beta2 ~ dnorm(0, 0.0001)
+tau ~ dgamma(0.0001, 0.0001)
+}
+", file="FevModel.txt")
+
+# run the mcmc in Openbugs through R:
+fevmcmc <- bugs(data=q1data, inits=initial, parameters.to.save=pars, model.file="FevModel.txt",
+                 n.chains=3, n.iter=10000, n.burnin=700,
+                 n.thin=1, debug=TRUE
+)
+fevout<- fevmcmc$sims.array
+fevsum <- fevmcmc$summary
+fevtable <- cbind(fevsum[1:4,1], fevsum[1:4,2], fevsum[1:4,3], fevsum[1:4,7])
+colnames(fevtable) <- c("mean", "sd" , "2.5%", "97.5%")
+
+# plotting the marginal density of the parameters
+par(mfrow=c(2,2))
+for(i in 1:length(pars)){
+  plot(density(fevout[,1,pars[i]]),main=c('Marginal Posterior Density for', pars[i]), xlab=pars[i])
+}
+
+# plotting the autocorrelation of the parameters
+for(i in 1:length(pars)){
+  acf(fevout[,1,pars[i]], type='correlation', plot=T,main=c('Autocorrelation for', pars[i]))
+}
+
+# plotting the traceplots of the parameters
+for(i in 1:length(pars)){
+  ts.plot(fevout[,,pars[i]], main=c('Trace plots for', pars[i]), col=c(1,2,3))
+}
