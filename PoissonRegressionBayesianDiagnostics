@@ -1,0 +1,154 @@
+# Diagnostics on Poisson Regression model of the down syndrome births data
+library(R2OpenBUGS)
+library(coda)
+setwd("C:/Users/Aaron-/Desktop/2016 Winter Courses/CHL5223/Assignment 3/Q3")
+# loading the data and naming the columns of data
+downdata <- read.table("DownBirthData.txt")
+colnames(downdata) <- c("age", "birthorder", "numdown", "numlivebirth")
+age <- downdata[,1]
+birthorder <- downdata[,2]
+numdown <- downdata[,3]
+numlivebirth <- downdata[,4]
+# create a file where the model is defined
+cat("model{
+  for(i in 1:30)
+  {
+    numdown[i] ~ dpois(lam[i])
+    log(lam[i]) <- log(numlivebirth[i]) + b0 + beta.age[age[i]] + beta.bo[birthorder[i]] + b[i]
+    b[i] ~ dnorm(0, tau)
+    b.adj[i] <- b[i] - mean(b[])
+  }
+  b0 ~ dnorm(0,.001)
+  b0.adj <- b0 + mean(b[]) + mean(beta.age[]) + mean(beta.bo[])
+  for(is in 1:6){
+    beta.age[is] ~ dnorm(mu.age, tau.age)
+    beta.age.adj[is] <- beta.age[is] - mean(beta.age[])
+  }
+  mu.age ~ dnorm(0, 0.001)
+  for(ic in 1:5){
+    beta.bo[ic] ~ dnorm(mu.bo, tau.bo)
+    beta.bo.adj[ic]<-beta.bo[ic] - mean(beta.bo[])
+  }
+  mu.bo ~ dnorm(0, 0.001)
+
+  tau ~ dgamma(0.001, 0.001)
+  tau.age ~ dgamma(0.001, 0.001)
+  tau.bo ~ dgamma(0.001, 0.001)
+}", file="DownModel2.txt")
+# data to le loaded into wingbug
+q3data <- list("age", "birthorder", "numdown", "numlivebirth")
+# initial function
+initial3 = function(){list(
+  beta.age = rnorm(6), mu.age = rnorm(1), tau.age = 1/runif(1, 0.5, 2)^2,
+  beta.bo = rnorm(5), mu.bo = rnorm(1), tau.bo = 1/runif(1, 0.5, 2)^2,
+  b = rnorm(30), b0 = rnorm(1), tau = 1/runif(1, 0.5, 2)^2)
+}
+pars3=c("beta.age.adj", "tau.age", "beta.bo.adj", "tau.bo", "b0.adj", "tau")
+# running the model
+downmcmc2 <- bugs(data=q3data, inits=initial3, parameters.to.save=pars3,
+                 model.file="DownModel2.txt", n.chains=3, n.iter=110000, 
+                 n.burnin=10000, n.thin=10, debug=TRUE
+)
+downsum2 <- downmcmc2$summary
+downtable2 <- cbind(downsum2[,1:3], downsum2[,7])
+downtable2 <- downtable2[-16,]
+colnames(downtable2) <- c("mean", "sd", "2.5%", "97.5%")
+rownames(downtable2) <- c('$\\beta_{Age,1}$', '$\\beta_{Age,2}$', '$\\beta_{Age,3}$',
+                         '$\\beta_{Age,4}$', '$\\beta_{Age,5}$', '$\\beta_{Age,6}$',
+                         '$\\tau_{Age}$', '$\\beta_{BO,1}$', '$\\beta_{BO,2}$',
+                         '$\\beta_{BO,3}$', '$\\beta_{BO,4}$', '$\\beta_{BO,5}$',
+                         '$\\tau_{BO}$', '$\\beta_{0}$', '$\\tau$' )
+
+# plotting the acf of the parameters
+downout2 <- downmcmc2$sims.array
+parss2 <- c("beta.age.adj[1]", "beta.bo.adj[1]", "tau")
+par(mfrow=c(3,2))
+for(i in 1:length(parss2)){
+  acf(downout2[,1,parss2[i]], type='correlation', plot=T, main=c('Autocorrelation for', parss2[i]))
+}
+# plotting the traceplots of the parameters
+par(mfrow=c(3,2))
+for(i in 1:length(parsbo)){
+  ts.plot(downout[,,parsbo[i]], main=c('Trace plots for', parsbo[i]), col=c(1,2,3))
+}
+# plotting the density of the parameters from 3 different chains.
+par(mfrow=c(3,2))
+for(i in 1:length(parsbo)){
+  plot(density(downout[,1,parsbo[i]]), main=c('Density Plots of', parsbo[i]), xlab=parsbo[i])
+  lines(density(downout[,2,parsbo[i]]), col="red")
+  lines(density(downout[,3,parsbo[i]]), col="blue")
+  abline(v=mean(downout[,1:3,parsbo[i]]), col=c(1,2,3))
+}
+par(mfrow=c(4,2))
+for(i in 1:length(parsother)){
+  plot(density(downout[,1,parsother[i]]), main=c('Density Plots of', parsother[i]), xlab=parsother[i])
+  lines(density(downout[,2,parsother[i]]), col="red")
+  lines(density(downout[,3,parsother[i]]), col="blue")
+  abline(v=mean(downout[,1:3,parsother[i]]), col=c(1,2,3))
+}
+
+# Plotting the complete trace plots of the 3 parameters
+par(mfrow=c(2,2))
+for(i in 1:length(parss2)){
+  ts.plot(downout2[,,parss2[i]], main=c('Trace plots for', parss2[i]), col=c(1,2,3))
+}
+
+# PLotting the individual densities from the 3 chains
+par(mfrow=c(3,3))
+for(i in 1:length(parss2)){
+  plot(density(downout2[,1,parss2[i]]), main=c('Density Plots of', parss2[i], "(Chain 1)"), xlab=parss2[i])
+  abline(v=mean(downout2[,1,parss2[i]]), col="red")
+  plot(density(downout2[,2,parss2[i]]), main=c('Density Plots of', parss2[i], "(Chain 2)"), xlab=parss2[i])
+  abline(v=mean(downout2[,2,parss2[i]]), col="red")
+  plot(density(downout2[,3,parss2[i]]), main=c('Density Plots of', parss2[i], "(Chain 3)"), xlab=parss2[i])
+  abline(v=mean(downout2[,3,parss2[i]]), col="red")
+}
+
+# Calculating the Monte Carlo Accuracy using the ACF appraoch 
+seACF <- function(x) { 
+  vf <- 2*sum(acf(x, plot=FALSE)$acf) - 1
+  return(sd(x)*sqrt(vf)/sqrt(100000))
+}
+c1acf <- c(mean(downout2[,1,parss2[1]]), seACF(downout2[,1,parss2[1]]), mean(downout2[,1,parss2[2]]), seACF(downout2[,1,parss2[2]]), mean(downout2[,1,parss2[3]]), seACF(downout2[,1,parss2[3]]))
+c2acf <- c(mean(downout2[,2,parss2[1]]), seACF(downout2[,2,parss2[1]]), mean(downout2[,2,parss2[2]]), seACF(downout2[,2,parss2[2]]), mean(downout2[,2,parss2[3]]), seACF(downout2[,2,parss2[3]]))
+c3acf <- c(mean(downout2[,3,parss2[1]]), seACF(downout2[,3,parss2[1]]), mean(downout2[,3,parss2[2]]), seACF(downout2[,3,parss2[2]]), mean(downout2[,3,parss2[3]]), seACF(downout2[,3,parss2[3]]))
+acfsum <- rbind(c1acf, c2acf, c3acf)
+rownames(acfsum) <- c("Chain 1", "Chain 2", "Chain 3")
+colnames(acfsum) <- c("$\\beta_{Age,1}$", "$se(\\beta_{Age,1})$", "$\\beta_{BO,1}$", "$se(\\beta_{BO,1})$", "$\\tau$", "$se(\\tau$)")
+
+# Calculating the Monte Carlo Accuracy using the batch mean approach
+seBM <- function(x) { 
+  N <- length(x)
+  IN <- ceiling((1:N)/(N/200))
+  Bat <- tapply(x, IN, mean)
+  return(sd(Bat)/sqrt(length(Bat)))
+}
+c1bm <- c(mean(downout2[,1,parss2[1]]), seBM(downout2[,1,parss2[1]]), mean(downout2[,1,parss2[2]]), seBM(downout2[,1,parss2[2]]), mean(downout2[,1,parss2[3]]), seBM(downout2[,1,parss2[3]]))
+c2bm <- c(mean(downout2[,2,parss2[1]]), seBM(downout2[,2,parss2[1]]), mean(downout2[,2,parss2[2]]), seBM(downout2[,2,parss2[2]]), mean(downout2[,2,parss2[3]]), seBM(downout2[,2,parss2[3]]))
+c3bm <- c(mean(downout2[,3,parss2[1]]), seBM(downout2[,3,parss2[1]]), mean(downout2[,3,parss2[2]]), seBM(downout2[,3,parss2[2]]), mean(downout2[,3,parss2[3]]), seBM(downout2[,3,parss2[3]]))
+bmsum <- rbind(c1bm, c2bm, c3bm)
+rownames(bmsum) <- c("Chain 1", "Chain 2", "Chain 3")
+colnames(bmsum) <- c("$\\beta_{Age,1}$", "$se(\\beta_{Age,1})$", "$\\beta_{BO,1}$", "$se(\\beta_{BO,1})$", "$\\tau$", "$se(\\tau$)")
+
+# Using the Geweke diagnostics on the 3 different chains
+c1ge <- c(geweke.diag(downout2[,1,parss2[1]])$z, geweke.diag(downout2[,1,parss2[2]])$z, geweke.diag(downout2[,1,parss2[3]])$z)
+c2ge <- c(geweke.diag(downout2[,2,parss2[1]])$z, geweke.diag(downout2[,2,parss2[2]])$z, geweke.diag(downout2[,2,parss2[3]])$z)
+c3ge <- c(geweke.diag(downout2[,3,parss2[1]])$z, geweke.diag(downout2[,3,parss2[2]])$z, geweke.diag(downout2[,3,parss2[3]])$z)
+gesum <- rbind(c1ge, c2ge, c3ge)
+rownames(gesum) <- c("Chain 1", "Chain 2", "Chain 3")
+colnames(gesum) <- c("$\\beta_{Age,1}$", "$\\beta_{BO,1}$", "$\\tau$")
+
+# Using the Gelman-Rubin Method on the 3 different chains
+make.mcmc.list=function(x){
+  aa <- x$sims.array[,, c(1, 8, 15)]
+  zz <- list(list())
+  for(i in 1:(dim(aa)[2])){
+    tmp <- mcmc(aa[,i,])
+    zz <- c(zz,list(tmp))
+    }
+  res <- mcmc.list(zz[-1])
+  res
+}
+downmc2 <- make.mcmc.list(downmcmc2)
+gelsum <- t(gelman.diag(downmc2)$psrf)
+colnames(gelsum) <- c("$\\beta_{Age,1}$", "$\\beta_{BO,1}$", "$\\tau$")
