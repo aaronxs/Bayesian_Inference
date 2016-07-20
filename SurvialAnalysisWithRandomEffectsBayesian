@@ -1,0 +1,192 @@
+# Bayesian appraoch to survial analysis with random effects
+precToSd = function(x){
+  cbind(
+    sigma=1/sqrt(x[,1]), 
+    dsigma = x[,2] *2*x[,1]^(3/2)
+  )
+}
+priorSdFromPrec = function(priorDens, ...){
+  xSeq = seq(par('usr')[1], par('usr')[2], len=500)
+  precSeq = 1/xSeq^2
+  precToSd(
+    cbind(precSeq,
+          priorDens(x=precSeq, ...))
+  )
+}
+priorFromLog = function(priorDens, ...){
+  expSeqNA = expSeq = seq(par('usr')[1], par('usr')[2], len=500)
+  expSeqNA[expSeqNA <= 0] = NA 
+  xSeq = log(expSeqNA)
+  cbind(
+    xExp = expSeq,
+    yExp = priorDens(xSeq, ...)/expSeqNA
+  )
+}
+priorFromPlot = function(priorDens, ...){
+  xSeq = seq(par('usr')[1], par('usr')[2], len=500)
+  cbind(
+    xExp = expSeq,
+    yExp = priorDens(xSeq, ...)
+  )
+}
+sampleDensHazSingle = function(fit, x, covariates = c('(Intercept)'=1)) {
+  samp = inla.posterior.sample(1,fit)[[1]]
+  shape = samp$hyperpar[grep('alpha_intern for weibull', names(samp$hyperpar))]
+  betaIndex = which(fit$misc$configs$contents$length==1)
+  betaPars = fit$misc$configs$contents$start[betaIndex]
+  beta = samp$latent[betaPars]
+  names(beta) = fit$misc$configs$contents$tag[betaIndex]
+  
+  if(is.data.frame(covariates)) covariates = as.matrix(covariates)
+  if(!is.matrix(covariates)){
+    covariates = t(as.matrix(covariates))
+  }
+  
+  covNames = intersect(colnames(covariates), names(beta))
+  lambda = drop(exp(-tcrossprod(beta[covNames], covariates[,covNames,drop=FALSE])/shape))
+  
+  res = abind::abind(
+    dens = outer(x, lambda, function(a,b){dweibull(a,shape=shape, scale=b)}),
+    cumhaz = outer(x, lambda, '/')^shape,
+    along=3
+  )
+  if(length(x) < 10) dimnames(res)[[1]] = as.character(x)
+  res
+}
+sampleDensHaz = function(fit, x,n=1, covariates = c('(Intercept)'=1)) {
+  
+  if(is.null(rownames(covariates)) | 
+     all(rownames(covariates) == as.character(1:nrow(covariates)))
+  ) {
+    Srownames = NULL
+    for(D in colnames(covariates)[colnames(covariates) != '(Intercept)' ] ) {
+      Srownames = paste(Srownames, D, covariates[,D], sep='')
+    }	
+    getRid = duplicated(Srownames)
+    covariates = covariates[!getRid,]
+    rownames(covariates) = Srownames[!getRid]
+  }
+  
+  
+  result = replicate(n, sampleDensHazSingle(fit=fit, x=x, covariates=covariates))
+  if(n < 10)
+    dimnames(result)[[length(dim(result))]] = paste("sample", 1:n, sep='')
+  result = drop(result)
+  result
+}
+marginalDensHazSingle = function(shape,x){
+  
+  cbind(
+    haz = sort(as.numeric(
+      exp(log(shape) + (shape-1)*log(x)))
+    ), 
+    cumHaz = sort(as.numeric(exp(shape*log(x))))
+  )
+}
+marginalDensHaz = function(fit, x){
+  
+  if(length(x)==1) x = c(0, x)
+  if(length(x)==2){
+    x = seq(min(x), max(x), len=200)
+  }
+  shape = fit$summary.hyperpar[
+    grep('alpha parameter for weibull', rownames(fit$summary.hyperpar)), 
+    grep("quant$", colnames(fit$summary.hyperpar))]
+  
+  densHaz = simplify2array(
+    mapply(marginalDensHazSingle, x=x, MoreArgs = list(shape=unlist(shape)), SIMPLIFY=FALSE)
+  )
+  dimnames(densHaz)[[1]] = colnames(shape)
+  densHaz		
+  
+}
+library(survival);library(INLA)
+load("C:/Users/Aaron-/Desktop/2016 Winter Courses/STA2201/Homework 3/Q2/smoke.RData")
+smoke$FrstCig = smoke$Age_first_tried_cigt_smkg
+# take out all the NA rows in these 3 columns
+smoke = smoke[!is.na(smoke$FrstCig) & !is.na(smoke$Race) & !is.na(smoke$Sex) & !is.na(smoke$Age), ]
+smoke$cig1 = pmin(smoke$FrstCig, smoke$Age)
+smoke$cig1[which(smoke$FrstCig == 8)] = 0
+smoke$cig2 = smoke$FrstCig + 1
+smoke$cigEvent = 3 * (smoke$FrstCig < Inf)
+
+# setting up the model
+ySurv = inla.surv(time=smoke$cig1, event=smoke$cigEvent, time2=smoke$cig2)
+formula = ySurv ~ Age + Age^2 + Race + Sex + RuralUrban + 
+  f(school, model='iid', hyper=list(
+    theta=list(prior='loggamma', param=c(schoolPrior[1], schoolPrior[2])))) + 
+  f(state, model='iid', hyper=list(
+    theta=list(prior='loggamma', param=c(statePrior[1], statePrior[2]))))
+smokeInla <- inla(formula, family="weibull", data=smoke, verbose=TRUE, 
+                  control.family = list(hyper = list(
+                    # prior for kapppa is N(0 ,1)
+                    a = list(prior = 'normal', param = c(0, 1)))),
+                  control.fixed = list(
+                    # intercept ~ N(0, 4^2)
+                    mean.intercept=0, prec.intercept = 1/(4^2),
+                    # beta ~ N(0, 4^2)
+                    mean = 0, prec = 1/(4^2)),
+                  control.mode = list(theta=c(2.1, 2.3, 1.45), restart=TRUE),
+                  control.inla = list(h=0.0001, strategy='laplace', fast=FALSE),
+                  control.compute=list(config=TRUE))
+
+# transform precision to variance
+smokePrec <- 1/sqrt(smokeInla$summary.hyper)
+smokeVar <- smokePrec[2:3,3:5]
+rownames(smokeVar) <- c("School", "State")
+probs = 1 - as.numeric(gsub("quant", "", colnames(smokeVar)))
+colnames(smokeVar) <- paste(probs, "quant", sep = "")
+smokeVar <- smokeVar[, order(probs)]
+smokeVar <- cbind(smokeVar, exp(smokeVar))
+colnames(smokeVar) <- c("2.5th", "50th", "97.5th", "exp(2.5th)", "exp(50th)", "exp(97.5th)")
+
+# plot the prior & posterior of precision of state effect
+plot(precToSd(smokeInla$marginals.hyperpar$`Precision for school`), 
+     type = "l", xlim = c(0, 0.8), xlab="sigma of school effect")
+lines(precToSd(smokeInla$marginals.hyperpar$`Precision for state`), col="red")
+lines(priorSdFromPrec(dgamma, shape = 1, rate = schoolPrior), col = "green")
+lines(priorSdFromPrec(dgamma, shape = 1, rate = statePrior), col = "blue")
+legend("topright", lty = 1, col = c("black", "red", "green", "blue"), 
+       legend = c("sigma1 posterior", "sigma2 posterior", "sigma1 prior", "sigma2 prior"))
+
+
+# plot the prior & posterior of kappa
+plot(smokeInla$marginals.hyperpar$`alpha parameter for weibull`, type = "l", xlab = "shape", ylab = "dens")
+lines(priorFromLog(dnorm, mean = 0, sd = 1), col = "red")
+legend("topleft", lty = 1, col = c("black", "red"), legend = c("posterior", "prior"))
+# summary of kappa and the fixed effect parameters 
+smokeFixed <- rbind(smokeInla$summary.fixed[,1:5], smokeInla$summary.hyperpar[1,1:5])
+smokeFixed$sd <- NULL
+smokeFixed$`0.5quant` <- NULL
+rownames(smokeFixed) <- c("$\\beta_0$", "$\\beta_{Age}$", 
+                          "$\\beta_{Black}$", "$\\beta_{Hispanic}$", 
+                          "$\\beta_{Asian}$", "$\\beta_{Native}$", 
+                          "$\\beta_{Pacific}$", "$\\beta_{Female}$", 
+                          "$\\beta_{Rural}$", "$\\kappa$")
+# # plot the effect of age
+# plot(smokeInla$marginals.fixed$Age, type = "l", xlab = "log haz ratio", ylab = "dens")
+
+# hazard densities of urban and rural white male
+xSeq = seq(8, 30, len = 200)
+newCov = expand.grid(`(Intercept)` = 1, RuralUrbanRural = c(0, 1))
+densHaz = sampleDensHaz(fit = smokeInla, x = xSeq, n = 20, covariates = newCov)
+Scol = c(Urban = "red", Rural = "blue")
+ScolTrans = mapmisc::col2html(Scol, 0.2)
+plot(NA, xlim = range(xSeq), ylim = range(densHaz[,, "dens", ]), xlab = "age", ylab = "dens")
+for (D in dimnames(densHaz)[[2]]){
+  matlines(xSeq, densHaz[, D, "dens", ], lwd=1,
+           col = ScolTrans[c("Urban", "Rural")[1 + grepl("RuralUrbanRural1", D)]])}
+legend("topright", col = c("red", "blue"), lty = 1, legend = c("Urban", "Rural"))
+
+# cumulative hazard
+# hazard densities of urban and rural white male
+xSeq = seq(8, 30, len = 200)
+newCov1 = expand.grid(`(Intercept)` = 1, Age = c(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
+densHaz1 = sampleDensHaz(fit = smokeInla, x = xSeq, n = 20, covariates = newCov1)
+Scol1 = rainbow(11)
+ScolTrans1 = mapmisc::col2html(Scol1, 0.2)
+plot(NA, xlim = range(xSeq), ylim = range(densHaz[,, "dens", ]), xlab = "age", ylab = "dens")
+for (D in 1:11){
+  matlines(xSeq, densHaz[, D, "dens", ], lwd=1,
+           col = ScolTrans1[D])}
+legend("topright", col = Scol1, lty = 1)
