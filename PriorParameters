@@ -1,0 +1,32 @@
+# Calculate prior paramters based on info given
+# Prior for random effect School 
+schoolOptimal <- function(par){
+  # par[1] is share and par[2] is the rate
+  pt <- qnorm(0.9, mean=0, sd=1)
+  # 2.5th quantile 39.95997
+  low <- (2*pt/log(1.5))^2
+  # median 723.192
+  mid <- (2*pt/log(1.2))^2
+  sum((qgamma(c(0.025, 0.975), shape=1, rate=par) - c(low, mid))^2)
+}
+schoolPrior <- nlm(schoolOptimal, 10)$estimate
+print(schoolOptimal(schoolPrior))
+print(schoolPrior)
+print(c((2*pt/log(1.5))^2, (2*pt/log(1.2))^2))
+print(qgamma(c(0.025, 0.975), shape=1, rate=schoolPrior))
+
+# Prior for random effect State
+stateOptimal <- function(par){
+  # par[1] is share and par[2] is the rate
+  pt <- qnorm(0.9, mean=0, sd=1)
+  # 2.5th quantile 1.23908
+  low <- (2*pt/log(10))^2
+  # median 13.67355
+  mid <- (2*pt/log(2))^2
+  sum((qgamma(c(0.025, 0.5), shape=1, rate=par)- c(low, mid))^2)
+}
+statePrior <- nlm(stateOptimal, 10)$estimate
+print(stateOptimal(statePrior))
+print(statePrior)
+print(c((2*pt/log(10))^2, (2*pt/log(2))^2))
+print(qgamma(c(0.025, 0.5), shape=1, rate=statePrior))
